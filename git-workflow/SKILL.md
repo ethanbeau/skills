@@ -15,12 +15,13 @@ All GitHub interactions use the `gh` CLI exclusively (no MCP tools for git/GitHu
 
 | Script                                                                                        | Purpose                                                                   |
 | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `scripts/gather_repo_state.py`                                                                | Repo state JSON: owner, repo, branch, base, staged, commits ahead         |
+| `scripts/prepare_commit.py <msg>`                                                             | Primary commit preflight: readiness, blockers, and push command           |
+| `scripts/gather_repo_state.py`                                                                | Raw repo state for PR creation and debugging                              |
 | `scripts/fetch_pr_context.py <owner> <repo> <N> [--max-lines] [--max-file-lines] [--no-skip]` | PR metadata + filtered per-file diffs as JSON                             |
 | `scripts/fetch_threads.py <owner> <repo> <N>`                                                 | Fetch unresolved PR threads (paginated GraphQL)                           |
 | `scripts/submit_review.py <owner> <repo> <N> <event> <summary> [comments.json]`               | Submit review with optional line comments                                 |
 | `scripts/create_worktree.py <branch> [base]`                                                  | Create worktree in `$GIT_WORKTREE_DIR` with `<repo>-<branch-slug>` naming |
-| `scripts/validate_commit_msg.py <msg>`                                                        | Validate conventional commit + 50/72 rules                                |
+| `scripts/validate_commit_msg.py <msg>`                                                        | Message-only validator for isolated checks                                |
 
 ## Preflight
 
@@ -90,19 +91,24 @@ git commit -m "<type>[scope]: <description>"
 git commit -m "<type>[scope]: <description>" -m "<body explaining what and why>"
 ```
 
-4. Validate before committing:
+4. Run the commit preflight before committing:
 
 ```bash
-python3 scripts/validate_commit_msg.py "<message>"
+python3 scripts/prepare_commit.py "<message>"
 ```
+
+By default it returns compact JSON with commit readiness, blockers, and the
+recommended push command. Add `--verbose` when you also need raw repo state and
+message-validation details. It exits 0 when the current branch is ready to
+commit and 1 when there are blockers.
 
 For multi-line messages (body/footer), write to a temp file under `$TMPDIR` and use `--file`:
 
 ```bash
-python3 scripts/validate_commit_msg.py --file "$TMPDIR/commit-msg.txt"
+python3 scripts/prepare_commit.py --file "$TMPDIR/commit-msg.txt"
 ```
 
-Returns `{"valid": true/false, "errors": [...]}`. Fix any errors before executing the commit.
+If you only need message validation without branch or staging checks, run `validate_commit_msg.py` directly.
 
 ### 50/72 Rule
 

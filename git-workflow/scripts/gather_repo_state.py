@@ -21,7 +21,7 @@ Example output:
 import json
 import subprocess
 import sys
-from typing import Never
+from typing import Any, Never
 from urllib.parse import urlparse
 
 
@@ -106,7 +106,7 @@ def detect_base_branch() -> str:
     return "main"
 
 
-def main() -> None:
+def get_repo_state() -> dict[str, Any]:
     repo_check = subprocess.run(
         ["git", "rev-parse", "--is-inside-work-tree"],
         capture_output=True,
@@ -143,7 +143,7 @@ def main() -> None:
     )
     commits_ahead = [line for line in commits_ahead_raw.splitlines() if line]
 
-    state = {
+    return {
         "owner": owner,
         "repo": repo,
         "branch": branch,
@@ -154,6 +154,10 @@ def main() -> None:
         "commits_ahead": commits_ahead,
         "commits_ahead_count": len(commits_ahead),
     }
+
+
+def main() -> None:
+    state = get_repo_state()
     json.dump(state, sys.stdout, indent=2)
     print()
 

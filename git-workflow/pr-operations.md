@@ -52,11 +52,22 @@ git commit -m "<type>[scope]: <description>"
 git push -u origin HEAD
 ```
 
-Validate commit messages before `git commit`:
+Run the commit preflight before `git commit`:
 
 ```bash
-python3 scripts/validate_commit_msg.py "<message>"
+python3 scripts/prepare_commit.py "<message>"
 ```
+
+For multi-line messages, pass the temp file directly to the preflight:
+
+```bash
+python3 scripts/prepare_commit.py --file "$TMPDIR/commit-msg.txt"
+```
+
+It returns compact JSON with readiness, blockers, and the recommended push
+command. Add `--verbose` when you need the raw repo-state and validation
+payloads. Use `validate_commit_msg.py` directly only for message-only
+debugging.
 
 ### 4) Generate PR Content
 

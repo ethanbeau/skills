@@ -21,7 +21,7 @@ Exit code 0 if valid, 1 if invalid, 2 if usage error.
 import json
 import re
 import sys
-from typing import Never
+from typing import Any, Never
 
 TYPES = frozenset(
     {
@@ -144,10 +144,14 @@ def read_message(argv: list[str]) -> str:
     fail_usage()
 
 
+def validation_result(message: str) -> dict[str, Any]:
+    errors = validate(message)
+    return {"valid": len(errors) == 0, "errors": errors}
+
+
 def main() -> None:
     message = read_message(sys.argv)
-    errors = validate(message)
-    result = {"valid": len(errors) == 0, "errors": errors}
+    result = validation_result(message)
     json.dump(result, sys.stdout, indent=2)
     print()
     sys.exit(0 if result["valid"] else 1)
