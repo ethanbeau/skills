@@ -17,6 +17,7 @@ import json
 import re
 import subprocess
 import sys
+from typing import Never
 
 BASE_FILE_BUDGET = 80
 
@@ -54,7 +55,7 @@ HUNK_HEADER_RE = re.compile(
 )
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> Never:
     print(f"ERROR: {message}", file=sys.stderr)
     sys.exit(1)
 
@@ -216,22 +217,94 @@ def finalize_hunk(hunk: dict) -> dict:
     return hunk
 
 
+def is_diff_metadata_line(line: str) -> bool:
+    return (
+        line.startswith("diff --git")
+        or line.startswith("index ")
+        or line.startswith("--- ")
+        or line.startswith("+++ ")
+        or line.startswith("@@")
+        or line.startswith("\\ No newline at end of file")
+    )
+
+
 def minimum_useful_lines(lines: list[str], capped_line_count: int) -> int:
     capped_lines = lines[:capped_line_count]
 
     for index, line in enumerate(capped_lines, start=1):
-        if (
-            line.startswith("diff --git")
-            or line.startswith("index ")
-            or line.startswith("--- ")
-            or line.startswith("+++ ")
-            or line.startswith("@@")
-            or line.startswith("\\ No newline at end of file")
-        ):
+        if is_diff_metadata_line(line):
             continue
         return index
 
     return min(capped_line_count, 1)
+
+
+def build_candidate(entry: dict, churn: dict[str, int], max_file_lines: int) -> dict:
+    original_lines = entry["raw"].split("\n")
+    capped_line_count = min(len(original_lines), max_file_lines)
+
+    return {
+        "path": entry["path"],
+        "original_lines": original_lines,
+        "original_line_count": len(original_lines),
+        "capped_line_count": capped_line_count,
+        "minimum_useful_lines": minimum_useful_lines(original_lines, capped_line_count),
+        "churn": churn.get(entry["path"], 0),
+        "allocated": 0,
+    }
+
+
+def allocate_line_budget(
+    candidates: list[dict], max_lines: int, max_file_lines: int
+) -> None:
+    budget_remaining = max_lines
+    base_file_budget = min(BASE_FILE_BUDGET, max_file_lines)
+
+    for index, entry in enumerate(candidates):
+        if budget_remaining <= 0:
+            continue
+
+        remaining_files = len(candidates) - index
+        fair_share = max(1, budget_remaining // remaining_files)
+        initial_budget = min(entry["capped_line_count"], base_file_budget, fair_share)
+
+        if initial_budget < entry["minimum_useful_lines"]:
+            if budget_remaining < entry["minimum_useful_lines"]:
+                continue
+            initial_budget = min(
+                entry["capped_line_count"],
+                max(base_file_budget, entry["minimum_useful_lines"]),
+            )
+
+        entry["allocated"] = initial_budget
+        budget_remaining -= initial_budget
+
+    for entry in candidates:
+        if budget_remaining <= 0:
+            break
+
+        remaining = entry["capped_line_count"] - entry["allocated"]
+        if remaining <= 0:
+            continue
+
+        if entry["allocated"] == 0 and budget_remaining < entry["minimum_useful_lines"]:
+            continue
+
+        extra_budget = min(remaining, budget_remaining)
+        if entry["allocated"] == 0 and extra_budget < entry["minimum_useful_lines"]:
+            continue
+
+        entry["allocated"] += extra_budget
+        budget_remaining -= extra_budget
+
+
+def truncation_reasons_for(entry: dict, max_file_lines: int) -> list[str]:
+    reasons: list[str] = []
+    if entry["original_line_count"] > max_file_lines:
+        reasons.append("file_limit")
+    if entry["allocated"] < entry["capped_line_count"]:
+        reasons.append("total_limit")
+    return reasons
 
 
 def parse_hunks(lines: list[str], truncated: bool) -> list[dict]:
@@ -318,63 +391,10 @@ def process_diffs(
             filtered_files.append({"path": path, "reason": reason})
             continue
 
-        original_lines = entry["raw"].split("\n")
-        candidates.append(
-            {
-                "path": path,
-                "original_lines": original_lines,
-                "original_line_count": len(original_lines),
-                "capped_line_count": min(len(original_lines), max_file_lines),
-                "minimum_useful_lines": minimum_useful_lines(
-                    original_lines,
-                    min(len(original_lines), max_file_lines),
-                ),
-                "churn": churn.get(path, 0),
-                "allocated": 0,
-            }
-        )
+        candidates.append(build_candidate(entry, churn, max_file_lines))
 
     candidates.sort(key=lambda entry: (-entry["churn"], entry["path"]))
-
-    budget_remaining = max_lines
-    base_file_budget = min(BASE_FILE_BUDGET, max_file_lines)
-
-    for index, entry in enumerate(candidates):
-        if budget_remaining <= 0:
-            continue
-
-        remaining_files = len(candidates) - index
-        fair_share = max(1, budget_remaining // remaining_files)
-        initial_budget = min(entry["capped_line_count"], base_file_budget, fair_share)
-
-        if initial_budget < entry["minimum_useful_lines"]:
-            if budget_remaining < entry["minimum_useful_lines"]:
-                continue
-            initial_budget = min(
-                entry["capped_line_count"],
-                max(base_file_budget, entry["minimum_useful_lines"]),
-            )
-
-        entry["allocated"] = initial_budget
-        budget_remaining -= initial_budget
-
-    for entry in candidates:
-        if budget_remaining <= 0:
-            break
-
-        remaining = entry["capped_line_count"] - entry["allocated"]
-        if remaining <= 0:
-            continue
-
-        if entry["allocated"] == 0 and budget_remaining < entry["minimum_useful_lines"]:
-            continue
-
-        extra_budget = min(remaining, budget_remaining)
-        if entry["allocated"] == 0 and extra_budget < entry["minimum_useful_lines"]:
-            continue
-
-        entry["allocated"] += extra_budget
-        budget_remaining -= extra_budget
+    allocate_line_budget(candidates, max_lines, max_file_lines)
 
     diff_files: list[dict] = []
     omitted_files: list[dict] = []
@@ -392,11 +412,7 @@ def process_diffs(
             continue
 
         lines = entry["original_lines"][: entry["allocated"]]
-        truncation_reasons: list[str] = []
-        if entry["original_line_count"] > max_file_lines:
-            truncation_reasons.append("file_limit")
-        if entry["allocated"] < entry["capped_line_count"]:
-            truncation_reasons.append("total_limit")
+        truncation_reasons = truncation_reasons_for(entry, max_file_lines)
 
         was_truncated = bool(truncation_reasons)
         if was_truncated:

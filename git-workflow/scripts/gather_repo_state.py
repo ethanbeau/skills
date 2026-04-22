@@ -21,12 +21,61 @@ Example output:
 import json
 import subprocess
 import sys
+from typing import Never
 from urllib.parse import urlparse
+
+
+def fail(message: str) -> Never:
+    print(f"ERROR: {message}", file=sys.stderr)
+    sys.exit(1)
 
 
 def run(cmd: list[str], check: bool = True) -> str:
     result = subprocess.run(cmd, capture_output=True, text=True, check=check)
     return result.stdout.strip()
+
+
+def command_succeeded(cmd: list[str]) -> bool:
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    return result.returncode == 0
+
+
+def detect_remote_head() -> str | None:
+    result = subprocess.run(
+        ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip().removeprefix("refs/remotes/origin/")
+
+
+def detect_origin_show_head() -> str | None:
+    result = subprocess.run(
+        ["git", "remote", "show", "origin"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+
+    prefix = "  HEAD branch: "
+    for line in result.stdout.splitlines():
+        if line.startswith(prefix):
+            return line.removeprefix(prefix).strip()
+
+    return None
+
+
+def branch_exists(branch: str) -> bool:
+    return command_succeeded(["git", "rev-parse", "--verify", f"refs/heads/{branch}"])
+
+
+def remote_branch_exists(branch: str) -> bool:
+    return command_succeeded(
+        ["git", "rev-parse", "--verify", f"refs/remotes/origin/{branch}"]
+    )
 
 
 def parse_remote_url(url: str) -> tuple[str, str]:
@@ -42,49 +91,16 @@ def parse_remote_url(url: str) -> tuple[str, str]:
 
 def detect_base_branch() -> str:
     """Detect base branch: prefer remote default, else develop, else main/master."""
-    r = subprocess.run(
-        ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
-        capture_output=True,
-        text=True,
-    )
-    if r.returncode == 0:
-        return r.stdout.strip().removeprefix("refs/remotes/origin/")
-
-    r = subprocess.run(
-        ["git", "remote", "show", "origin"],
-        capture_output=True,
-        text=True,
-    )
-    if r.returncode == 0:
-        for line in r.stdout.splitlines():
-            prefix = "  HEAD branch: "
-            if line.startswith(prefix):
-                return line.removeprefix(prefix).strip()
-
-    for ref in ("refs/heads/develop", "refs/remotes/origin/develop"):
-        r = subprocess.run(
-            ["git", "rev-parse", "--verify", ref],
-            capture_output=True,
-            text=True,
-        )
-        if r.returncode == 0:
-            return "develop"
-
-    for branch in ("main", "master"):
-        r = subprocess.run(
-            ["git", "rev-parse", "--verify", f"refs/remotes/origin/{branch}"],
-            capture_output=True,
-            text=True,
-        )
-        if r.returncode == 0:
+    for detector in (detect_remote_head, detect_origin_show_head):
+        branch = detector()
+        if branch:
             return branch
 
-        r = subprocess.run(
-            ["git", "rev-parse", "--verify", f"refs/heads/{branch}"],
-            capture_output=True,
-            text=True,
-        )
-        if r.returncode == 0:
+    if branch_exists("develop") or remote_branch_exists("develop"):
+        return "develop"
+
+    for branch in ("main", "master"):
+        if remote_branch_exists(branch) or branch_exists(branch):
             return branch
 
     return "main"
@@ -97,8 +113,7 @@ def main() -> None:
         text=True,
     )
     if repo_check.returncode != 0:
-        print("ERROR: Not inside a git repository", file=sys.stderr)
-        sys.exit(1)
+        fail("Not inside a git repository")
 
     remote_result = subprocess.run(
         ["git", "remote", "get-url", "origin"],
@@ -106,15 +121,13 @@ def main() -> None:
         text=True,
     )
     if remote_result.returncode != 0:
-        print("ERROR: Repository has no 'origin' remote", file=sys.stderr)
-        sys.exit(1)
+        fail("Repository has no 'origin' remote")
 
     remote_url = remote_result.stdout.strip()
     owner, repo = parse_remote_url(remote_url)
     branch = run(["git", "branch", "--show-current"])
     if not branch:
-        print("ERROR: HEAD is detached (not on a branch)", file=sys.stderr)
-        sys.exit(1)
+        fail("HEAD is detached (not on a branch)")
 
     base_branch = detect_base_branch()
     on_base_branch = branch == base_branch

@@ -9,6 +9,7 @@ import json
 import subprocess
 import sys
 from itertools import groupby
+from typing import Never
 
 QUERY = """
 query($owner:String!, $repo:String!, $number:Int!, $after:String) {
@@ -39,6 +40,18 @@ query($owner:String!, $repo:String!, $number:Int!, $after:String) {
 """
 
 
+def fail(message: str) -> Never:
+    print(f"ERROR: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def load_json(raw: str) -> dict:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        fail(f"gh api graphql returned invalid JSON: {exc}")
+
+
 def gh_graphql(owner: str, repo: str, number: int, after: str | None = None) -> dict:
     cmd = [
         "gh",
@@ -54,9 +67,20 @@ def gh_graphql(owner: str, repo: str, number: int, after: str | None = None) -> 
         f"query={QUERY}",
     ]
     if after:
-        cmd += ["-F", f"after={after}"]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    return json.loads(result.stdout)
+        cmd.extend(["-F", f"after={after}"])
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except FileNotFoundError:
+        fail("gh CLI is not installed or not on PATH")
+    except OSError as exc:
+        fail(f"gh api graphql failed: {exc}")
+
+    if result.returncode != 0:
+        details = result.stderr.strip() or result.stdout.strip() or "unknown error"
+        fail(f"gh api graphql failed: {details}")
+
+    return load_json(result.stdout)
 
 
 def fetch_all_threads(owner: str, repo: str, number: int) -> list[dict]:
@@ -79,32 +103,37 @@ def fetch_all_threads(owner: str, repo: str, number: int) -> list[dict]:
     return threads
 
 
+def build_thread_comments(thread: dict) -> list[dict]:
+    return [
+        {
+            "comment_id": comment["databaseId"],
+            "author": comment["author"]["login"],
+            "body": comment["body"],
+            "path": comment["path"],
+            "line": comment["line"],
+            "start_line": comment["startLine"],
+            "original_line": comment["originalLine"],
+        }
+        for comment in thread["comments"]["nodes"]
+    ]
+
+
+def thread_path(thread: dict) -> str:
+    return thread["comments"][0]["path"] or ""
+
+
 def transform(threads: list[dict]) -> list[dict]:
     flat = []
-    for t in threads:
-        comments = [
-            {
-                "comment_id": c["databaseId"],
-                "author": c["author"]["login"],
-                "body": c["body"],
-                "path": c["path"],
-                "line": c["line"],
-                "start_line": c["startLine"],
-                "original_line": c["originalLine"],
-            }
-            for c in t["comments"]["nodes"]
-        ]
+    for thread in threads:
+        comments = build_thread_comments(thread)
         if not comments:
             continue
-        flat.append({"thread_id": t["id"], "comments": comments})
+        flat.append({"thread_id": thread["id"], "comments": comments})
 
-    def key_fn(t):
-        return t["comments"][0]["path"] or ""
-
-    sorted_threads = sorted(flat, key=key_fn)
+    sorted_threads = sorted(flat, key=thread_path)
     return [
         {"path": path, "threads": list(group)}
-        for path, group in groupby(sorted_threads, key=key_fn)
+        for path, group in groupby(sorted_threads, key=thread_path)
     ]
 
 

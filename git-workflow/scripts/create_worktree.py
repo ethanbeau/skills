@@ -14,12 +14,32 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Never
 from urllib.parse import urlparse
+
+
+def fail(message: str) -> Never:
+    print(f"ERROR: {message}", file=sys.stderr)
+    sys.exit(1)
 
 
 def run(cmd: list[str], check: bool = True) -> str:
     result = subprocess.run(cmd, capture_output=True, text=True, check=check)
     return result.stdout.strip()
+
+
+def command_succeeded(cmd: list[str]) -> bool:
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    return result.returncode == 0
+
+
+def remote_head_exists(branch: str) -> bool:
+    result = subprocess.run(
+        ["git", "ls-remote", "--heads", "origin", branch],
+        capture_output=True,
+        text=True,
+    )
+    return bool(result.stdout.strip())
 
 
 def repo_name() -> str:
@@ -34,47 +54,30 @@ def repo_name() -> str:
 
 def main() -> None:
     if len(sys.argv) < 2:
-        print("Usage: create_worktree.py <branch_name> [base_ref]", file=sys.stderr)
-        sys.exit(1)
+        fail("Usage: create_worktree.py <branch_name> [base_ref]")
 
     branch = sys.argv[1]
     base_ref = sys.argv[2] if len(sys.argv) > 2 else None
 
     worktree_dir = os.environ.get("GIT_WORKTREE_DIR")
     if not worktree_dir:
-        print("ERROR: $GIT_WORKTREE_DIR is not set", file=sys.stderr)
-        sys.exit(1)
+        fail("$GIT_WORKTREE_DIR is not set")
+    worktree_root = Path(worktree_dir)
 
     name = repo_name()
     slug = branch.replace("/", "-")
-    worktree_path = Path(worktree_dir) / f"{name}-{slug}"
+    worktree_path = worktree_root / f"{name}-{slug}"
 
     if worktree_path.exists():
-        print(
-            f"ERROR: Worktree directory already exists: {worktree_path}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        fail(f"Worktree directory already exists: {worktree_path}")
 
-    r = subprocess.run(
-        ["git", "rev-parse", "--verify", f"refs/heads/{branch}"],
-        capture_output=True,
-        text=True,
-    )
-    if r.returncode == 0:
-        print(f"ERROR: Branch '{branch}' already exists locally", file=sys.stderr)
-        sys.exit(1)
+    if command_succeeded(["git", "rev-parse", "--verify", f"refs/heads/{branch}"]):
+        fail(f"Branch '{branch}' already exists locally")
 
-    r = subprocess.run(
-        ["git", "ls-remote", "--heads", "origin", branch],
-        capture_output=True,
-        text=True,
-    )
-    if r.stdout.strip():
-        print(f"ERROR: Branch '{branch}' already exists on remote", file=sys.stderr)
-        sys.exit(1)
+    if remote_head_exists(branch):
+        fail(f"Branch '{branch}' already exists on remote")
 
-    Path(worktree_dir).mkdir(parents=True, exist_ok=True)
+    worktree_root.mkdir(parents=True, exist_ok=True)
 
     cmd = ["git", "worktree", "add", str(worktree_path), "-b", branch]
     if base_ref:

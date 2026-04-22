@@ -21,6 +21,7 @@ Exit code 0 if valid, 1 if invalid, 2 if usage error.
 import json
 import re
 import sys
+from typing import Never
 
 TYPES = frozenset(
     {
@@ -39,6 +40,11 @@ TYPES = frozenset(
 
 SUBJECT_MAX = 50
 BODY_WRAP = 72
+USAGE = (
+    "Usage: validate_commit_msg.py <message>\n"
+    "       validate_commit_msg.py --file <path>\n"
+    "       validate_commit_msg.py --stdin"
+)
 
 PREFIX_RE = re.compile(
     r"^(?P<type>[a-z]+)"
@@ -55,6 +61,11 @@ FOOTER_RE = re.compile(
     r"|[A-Za-z-]+ #\d+"
     r")$"
 )
+
+
+def fail_usage() -> Never:
+    print(USAGE, file=sys.stderr)
+    sys.exit(2)
 
 
 def validate(message: str) -> list[str]:
@@ -100,38 +111,41 @@ def validate(message: str) -> list[str]:
     body_start = 2 if len(lines) >= 2 and not lines[1].strip() else 1
 
     in_footer = False
-    for i, line in enumerate(lines[body_start:], start=body_start + 1):
+    for line_number, line in enumerate(lines[body_start:], start=body_start + 1):
         if not in_footer and FOOTER_RE.match(line):
-            if i >= 3 and lines[i - 2].strip():
-                errors.append(f"Line {i}: footer should be preceded by a blank line")
+            if line_number >= 3 and lines[line_number - 2].strip():
+                errors.append(
+                    f"Line {line_number}: footer should be preceded by a blank line"
+                )
             in_footer = True
 
         if in_footer:
             continue
 
         if len(line) > BODY_WRAP:
-            errors.append(f"Line {i}: {len(line)} chars (wrap at {BODY_WRAP})")
+            errors.append(
+                f"Line {line_number}: {len(line)} chars (wrap at {BODY_WRAP})"
+            )
 
     return errors
 
 
-def main() -> None:
-    if len(sys.argv) >= 3 and sys.argv[1] == "--file":
-        with open(sys.argv[2]) as f:
-            message = f.read()
-    elif len(sys.argv) >= 2 and sys.argv[1] == "--stdin":
-        message = sys.stdin.read()
-    elif len(sys.argv) >= 2 and sys.argv[1] not in ("--file", "--stdin"):
-        message = sys.argv[1]
-    else:
-        print(
-            "Usage: validate_commit_msg.py <message>\n"
-            "       validate_commit_msg.py --file <path>\n"
-            "       validate_commit_msg.py --stdin",
-            file=sys.stderr,
-        )
-        sys.exit(2)
+def read_message(argv: list[str]) -> str:
+    if len(argv) >= 3 and argv[1] == "--file":
+        with open(argv[2], encoding="utf-8") as handle:
+            return handle.read()
 
+    if len(argv) >= 2 and argv[1] == "--stdin":
+        return sys.stdin.read()
+
+    if len(argv) >= 2 and argv[1] not in ("--file", "--stdin"):
+        return argv[1]
+
+    fail_usage()
+
+
+def main() -> None:
+    message = read_message(sys.argv)
     errors = validate(message)
     result = {"valid": len(errors) == 0, "errors": errors}
     json.dump(result, sys.stdout, indent=2)

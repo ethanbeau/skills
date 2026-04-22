@@ -12,53 +12,87 @@ Output: API response JSON to stdout.
 import json
 import subprocess
 import sys
+from typing import Never
+
+
+def fail(message: str) -> Never:
+    print(f"ERROR: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def run_gh(cmd: list[str], payload: str | None = None) -> str:
+    try:
+        result = subprocess.run(
+            cmd,
+            input=payload,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        fail("gh CLI is not installed or not on PATH")
+    except OSError as exc:
+        fail(str(exc))
+
+    if result.returncode != 0:
+        fail(result.stderr.strip() or result.stdout.strip() or "gh command failed")
+
+    return result.stdout
+
+
+def parse_comments(comments_file: str | None) -> list[dict]:
+    if not comments_file:
+        return []
+
+    with open(comments_file, encoding="utf-8") as handle:
+        return json.load(handle)
 
 
 def submit_with_comments(
     owner: str, repo: str, number: int, event: str, summary: str, comments: list[dict]
 ) -> None:
     payload = json.dumps({"event": event, "body": summary, "comments": comments})
-    result = subprocess.run(
-        [
-            "gh",
-            "api",
-            f"repos/{owner}/{repo}/pulls/{number}/reviews",
-            "--method",
-            "POST",
-            "--input",
-            "-",
-        ],
-        input=payload,
-        capture_output=True,
-        text=True,
+    print(
+        run_gh(
+            [
+                "gh",
+                "api",
+                f"repos/{owner}/{repo}/pulls/{number}/reviews",
+                "--method",
+                "POST",
+                "--input",
+                "-",
+            ],
+            payload=payload,
+        )
     )
-    if result.returncode != 0:
-        print(f"ERROR: {result.stderr.strip()}", file=sys.stderr)
-        sys.exit(1)
-    print(result.stdout)
 
 
 def submit_simple(owner: str, repo: str, number: int, event: str, summary: str) -> None:
     flag = "--request-changes" if event == "REQUEST_CHANGES" else "--comment"
-    result = subprocess.run(
-        [
-            "gh",
-            "pr",
-            "review",
-            str(number),
-            "--repo",
-            f"{owner}/{repo}",
-            flag,
-            "--body",
-            summary,
-        ],
-        capture_output=True,
-        text=True,
+    print(
+        run_gh(
+            [
+                "gh",
+                "pr",
+                "review",
+                str(number),
+                "--repo",
+                f"{owner}/{repo}",
+                flag,
+                "--body",
+                summary,
+            ]
+        )
     )
-    if result.returncode != 0:
-        print(f"ERROR: {result.stderr.strip()}", file=sys.stderr)
-        sys.exit(1)
-    print(result.stdout)
+
+
+def validate_event(event: str) -> None:
+    if event == "APPROVE":
+        fail("APPROVE is not permitted by review policy")
+
+    if event not in ("COMMENT", "REQUEST_CHANGES"):
+        fail(f"Invalid event '{event}'. Use COMMENT or REQUEST_CHANGES")
 
 
 def main() -> None:
@@ -75,21 +109,9 @@ def main() -> None:
     summary = sys.argv[5]
     comments_file = sys.argv[6] if len(sys.argv) > 6 else None
 
-    if event == "APPROVE":
-        print("ERROR: APPROVE is not permitted by review policy", file=sys.stderr)
-        sys.exit(1)
+    validate_event(event)
 
-    if event not in ("COMMENT", "REQUEST_CHANGES"):
-        print(
-            f"ERROR: Invalid event '{event}'. Use COMMENT or REQUEST_CHANGES",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    comments: list[dict] = []
-    if comments_file:
-        with open(comments_file) as f:
-            comments = json.load(f)
+    comments = parse_comments(comments_file)
 
     if comments:
         submit_with_comments(owner, repo, number, event, summary, comments)
