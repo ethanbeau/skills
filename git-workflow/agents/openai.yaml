@@ -1,0 +1,4 @@
+interface:
+  display_name: "Git Workflow"
+  short_description: "Team conventions for Git collaboration"
+  default_prompt: "Use $git-workflow to name this branch and draft its commit, PR, and review replies."

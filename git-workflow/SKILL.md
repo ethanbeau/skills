@@ -1,151 +1,111 @@
 ---
 name: git-workflow
-description: Create git worktrees, name branches, write and validate conventional commit messages, create and review pull requests (PRs), and address PR review comments. Use for requests about branches, commit messages, pull requests, PRs, reviews, review comments, or worktrees.
+description: Apply team conventions for Git branch names, conventional commit messages, pull-request titles and descriptions, and code-review comments or replies. Use when creating or naming a branch, drafting or validating a commit, preparing a PR, writing review feedback, or responding to review discussion.
 ---
 
 # Git Workflow
 
-## Utility Scripts
+Before drafting a branch, commit, or PR for an existing repository, check its
+contribution guidance and PR template when present. Repository-specific
+conventions take precedence over this skill.
 
-Scripts in `scripts/` handle complex git/gh operations that are error-prone to reproduce inline. Execute them directly with `python3` — do not regenerate their logic inline. All scripts are stdlib-only Python.
+## Response Format
 
-Scripts are referenced by relative paths under `scripts/`. If that doesn't resolve (e.g. working from a worktree or different directory), the scripts are bundled alongside this skill file. Use its parent directory to construct the absolute path.
+- For a branch request, offer one to three names and put the best choice first.
+- For a commit request, give the ready-to-use message first. Add a body only
+  when it preserves useful context about why, risk, or compatibility.
+- For a PR request, provide a title and a completed template.
+- For a review comment or reply request, provide the ready-to-post text unless
+  the user asks for implementation or more context.
 
-All GitHub interactions use the `gh` CLI exclusively (no MCP tools for git/GitHub operations).
+## Branches
 
-| Script                                                                                        | Purpose                                                                   |
-| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `scripts/prepare_commit.py <msg>`                                                             | Primary commit preflight: readiness, blockers, and push command           |
-| `scripts/gather_repo_state.py`                                                                | Raw repo state for PR creation and debugging                              |
-| `scripts/fetch_pr_context.py <owner> <repo> <N> [--max-lines] [--max-file-lines] [--no-skip]` | PR metadata + filtered per-file diffs as JSON                             |
-| `scripts/fetch_threads.py <owner> <repo> <N>`                                                 | Fetch unresolved PR threads (paginated GraphQL)                           |
-| `scripts/submit_review.py <owner> <repo> <N> <event> <summary> [comments.json]`               | Submit review with optional line comments                                 |
-| `scripts/create_worktree.py <branch> [base]`                                                  | Create worktree in `$GIT_WORKTREE_DIR` with `<repo>-<branch-slug>` naming |
-| `scripts/validate_commit_msg.py <msg>`                                                        | Message-only validator for isolated checks                                |
+Name branches `<type>/<short-kebab-description>`. Use lowercase letters,
+numbers, and hyphens. Describe the outcome, not the implementation.
 
-## Preflight
-
-- Confirm you are inside the target git repository and `origin` exists.
-- Confirm `gh auth status` succeeds before any GitHub operation.
-- Confirm whether staged changes on the current branch should be included before creating a PR.
-- Confirm `$GIT_WORKTREE_DIR` is set before creating a worktree.
-
-## Common Failure Cases
-
-- `gather_repo_state.py` exits non-zero for detached HEAD or missing `origin`.
-- `create_worktree.py` exits non-zero if the branch already exists or the target worktree directory already exists.
-- `validate_commit_msg.py` returns JSON errors for invalid conventional commits or 50/72 violations.
-- PR and review scripts fail if `gh` is not authenticated or the repo is not accessible.
-
-## Worktrees
-
-```bash
-python3 scripts/create_worktree.py <branch-name> [base-ref]
-```
-
-- Requires `$GIT_WORKTREE_DIR` to be set in the shell environment
-- Creates the base directory if it doesn't exist
-- Validates branch doesn't already exist locally or on remote
-- Directory naming: `<repo>-<branch-slug>` (`widget` + `feat/add-auth` -> `widget-feat-add-auth`)
-
-## Conventions Quick Reference
-
-Full specification in [conventions.md](conventions.md).
-
-**Branch**: `<type>/<description>` — lowercase alphanumerics and hyphens only
-
-**Commit**: `<type>[optional scope]: <description>` — imperative mood, max 50 char subject
-
-**PR title**: Same as commit format, description lowercase after prefix
-
-| Type     | Branch Prefix | Commit Prefix |
-| -------- | ------------- | ------------- |
-| Feature  | `feat/`       | `feat:`       |
-| Bug fix  | `fix/`        | `fix:`        |
-| Hotfix   | `hotfix/`     | `fix:`        |
-| Release  | `release/`    | `chore:`      |
-| Chore    | `chore/`      | `chore:`      |
-| Docs     | `docs/`       | `docs:`       |
-| Refactor | `refactor/`   | `refactor:`   |
-| Test     | `test/`       | `test:`       |
-| CI       | `ci/`         | `ci:`         |
-| Build    | `build/`      | `build:`      |
-| Perf     | `perf/`       | `perf:`       |
-| Style    | `style/`      | `style:`      |
-
-## Branch Creation
-
-1. Analyze staged/unstaged changes (or ask for context if ambiguous)
-2. Generate: `git checkout -b <type>/<description>`
-3. Rules: lowercase, hyphens between words, no consecutive/leading/trailing hyphens
+| Work | Prefix | Example |
+| --- | --- | --- |
+| Feature | `feat/` | `feat/team-invitations` |
+| Bug fix | `fix/` | `fix/token-refresh-loop` |
+| Documentation | `docs/` | `docs/api-authentication` |
+| Refactor | `refactor/` | `refactor/session-store` |
+| Tests | `test/` | `test/invitation-expiry` |
+| CI/build | `ci/` or `build/` | `ci/cache-dependencies` |
+| Maintenance | `chore/` | `chore/update-dependencies` |
+| Performance | `perf/` | `perf/reduce-query-count` |
+| Formatting | `style/` | `style/format-api-client` |
+| Urgent fix | `hotfix/` | `hotfix/revoke-compromised-key` |
+| Release preparation | `release/` | `release/v2.4.0` |
 
 ## Commits
 
-1. Run `git diff --staged`. If nothing is staged, ask the user what to stage (or `git add` specific files based on context) before proceeding.
-2. If intent unclear, ask for task description
-3. Generate two options — concise and detailed:
+Use Conventional Commits:
 
-```bash
-git commit -m "<type>[scope]: <description>"
+```text
+<type>[optional scope]: <imperative description>
 
-git commit -m "<type>[scope]: <description>" -m "<body explaining what and why>"
+[optional body]
+
+[optional footer(s)]
 ```
 
-4. Run the commit preflight before committing:
+- Use `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`,
+  `ci`, or `chore`.
+- Make the subject imperative, specific, lowercase after the prefix, and end
+  it without a period: `fix(auth): prevent refresh token reuse`.
+- Keep the subject at 50 characters or fewer, including its prefix.
+- Keep each body line at 72 characters or fewer. Separate the body and any
+  footer with blank lines. Explain what changed and why; omit implementation
+  detail unless it is important context.
+- Use a scope only when it makes the change easier to understand. Mark a
+  breaking change with `!` or a `BREAKING CHANGE:` footer.
+- Group one logical change per commit. Inspect the staged diff before writing
+  the message; do not commit unrelated work together.
 
-```bash
-python3 scripts/prepare_commit.py "<message>"
+## Pull Requests
+
+- Use the same format as commits for the title.
+- Use the repository's PR template. If none exists, use the bundled
+  [PULL_REQUEST_TEMPLATE.md](PULL_REQUEST_TEMPLATE.md).
+- State the user impact or motivation, what changed, how it was tested, and
+  material risks (including security, privacy, and migrations).
+- Make PR descriptions about the change, not a pasted commit message.
+
+## Review Comments and Replies
+
+Make comments specific, actionable, and tied to observable behavior. State the
+issue, impact, and requested change; suggest a direction when useful. Mark as
+**blocking** only issues that should prevent merging. Otherwise use a
+suggestion, nit, or question.
+
+Leave feedback on changed code as an inline comment on the smallest relevant
+line or contiguous range. Use a general PR comment only when feedback applies
+across files, concerns the overall design, or has no suitable changed line. On
+GitHub, add comments to a pending review and submit the complete review rather
+than publishing comments individually.
+
+Use a GitHub suggestion for an edit that is small, self-contained, and safe to
+evaluate in isolation:
+
+````markdown
+```suggestion
+replacement code
 ```
+````
 
-By default it returns compact JSON with commit readiness, blockers, and the
-recommended push command. Add `--verbose` when you also need raw repo state and
-message-validation details. It exits 0 when the current branch is ready to
-commit and 1 when there are blockers.
+Do not use suggestions for multi-file changes, unseen context, or broad design
+decisions.
 
-For multi-line messages (body/footer), write to a temp file under `$TMPDIR` and use `--file`:
+For every review thread, choose one outcome: fixed, partially fixed, deferred,
+or declined. Reply with the outcome first, then the rationale and evidence.
 
-```bash
-python3 scripts/prepare_commit.py --file "$TMPDIR/commit-msg.txt"
-```
+- **Fixed:** `Fixed in abc1234: validate the token before reading its claims.`
+- **Partially fixed:** `Updated the retry path in abc1234; the shared timeout
+  policy is out of scope because it affects all clients.`
+- **Deferred:** `Agreed. Tracked the broader cleanup in #123 so this PR can
+  remain focused.`
+- **Declined:** `Keeping this as-is: the framework invokes this method by name,
+  and renaming it would break discovery.`
 
-If you only need message validation without branch or staging checks, run `validate_commit_msg.py` directly.
-
-### 50/72 Rule
-
-- **Subject**: max 50 chars, imperative mood, no trailing period, lowercase after prefix
-- **Body**: wrap at 72 chars, explain WHAT and WHY (not HOW), separate from subject with blank line
-- **Footer**: `Closes #123`, `BREAKING CHANGE: ...`
-
-### Breaking Changes
-
-Indicate with `!` after type/scope (`feat!:`, `feat(api)!:`) or `BREAKING CHANGE:` footer.
-
-## PR Creation
-
-1. Gather repo state, create branch/commit if needed.
-2. If the current branch already has commits ahead of base and also has staged changes, do not ignore the staged work. Ask whether it belongs in the PR; if yes, commit it first.
-3. Generate PR title from commit/branch following conventions.
-4. **MANDATORY**: Locate and fill the `PULL_REQUEST_TEMPLATE.md` (check repo root `.github/` first, then skill-bundled template).
-5. **NEVER** use the commit message as the PR body. Always fill all relevant sections of the template based on the changes.
-6. Push and create the PR using `gh pr create --title "<title>" --body "<body>"`.
-
-Full procedure in [pr-operations.md](pr-operations.md).
-
-## PR Review
-
-1. **Fetch Context**: Use `python3 scripts/fetch_pr_context.py <owner> <repo> <number>` to get metadata and diffs.
-2. **Determine Focus**: Default to comprehensive (Correctness, Security, etc.) unless overridden by user.
-3. **Analyze**: Review diffs against focus areas; skip noisy/generated files automatically.
-4. **Build Review**: Draft summary and line comments (prefixed with `[critical]`, `[suggestion]`, or `[nit]`).
-5. **Confirm & Submit**: Present the full review to the user for confirmation before submitting via `python3 scripts/submit_review.py`.
-
-Full procedure in [pr-operations.md](pr-operations.md).
-
-## Address PR Comments
-
-1. **Fetch Threads**: Use `python3 scripts/fetch_threads.py <owner> <repo> <number>` to get unresolved, non-outdated threads.
-2. **Checkout & Fix**: Switch to the PR branch and implement minimal changes addressing feedback.
-3. **Commit & Push**: Group related fixes into logical commits; validate messages before pushing.
-4. **Reply**: Post descriptive replies to each thread using `gh api` only after a successful push.
-
-Full procedure in [pr-operations.md](pr-operations.md).
+Avoid vague acknowledgements such as `done` or `updated`. When a reply refers
+to a code change, post it only after the change is committed and pushed.
