@@ -1,6 +1,6 @@
 ---
 name: git-workflow
-description: Apply team conventions for Git branch names, conventional commit messages, pull-request titles and descriptions, and code-review comments or replies. Use when creating or naming a branch, drafting or validating a commit, preparing a PR, writing review feedback, or responding to review discussion.
+description: Apply team conventions for Git branch names, conventional commits, pull requests, and code-review comments or replies. Use when creating or naming a branch, drafting or validating a commit, preparing or creating a PR, writing review feedback, or responding to review discussion.
 ---
 
 # Git Workflow
@@ -70,6 +70,12 @@ Use Conventional Commits:
 - State the user impact or motivation, what changed, how it was tested, and
   material risks (including security, privacy, and migrations).
 - Make PR descriptions about the change, not a pasted commit message.
+
+### Stacked Pull Requests
+
+When asked to create stacked PRs, use GitHub's `gh stack` extension.
+If `github/gh-stack` is not installed, install it with
+`gh extension install github/gh-stack`.
 
 ## Review Comments and Replies
 
